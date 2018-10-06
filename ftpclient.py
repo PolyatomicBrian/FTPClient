@@ -18,8 +18,10 @@ is_debug = True
 
 class Logger:
     """Performs necessary logging of communication between Client & Server."""
-    def __init__(self):
+    # Class vars: log_file
+    def __init__(self, log_file):
         print_debug("Created Logger")
+        self.log_file = log_file
 
     def get_date_time(self):
         """Returns datetime as a string in the format: 9/25/18 22:00:00.0002"""
@@ -87,15 +89,44 @@ def usage():
           " 21.")
 
 
+def error_quit(msg, code):
+    """Prints out an error message, the program usage, and terminates with an
+    error code of `code`."""
+    print(msg)
+    usage()
+    exit(code)
+
+
 def parse_args():
     """Gets and returns provided arguments."""
     if len(sys.argv) < 3 or len(sys.argv) > 4:
-        print("Incorrect number of arguments!")
-        usage()
-        exit(1)
-    port = sys.argv[3] if len(sys.argv) == 4 else 21
+        error_quit("Incorrect number of arguments!", 400)
+    DEFAULT_FTP_PORT = 21
+    port = sys.argv[3] if len(sys.argv) == 4 else DEFAULT_FTP_PORT
+    port = validate_port(port)
     host, log_file = sys.argv[1], sys.argv[2]
     return host, log_file, port
+
+
+def validate_port(port):
+    """Cast port to an int and ensure it is between 0 and 65535."""
+    try:
+        port = int(port)
+        if port > 65535 or port < 0:
+            raise ValueError('Port is not between 0 and 65535!')
+    except Exception as e:
+        error_quit("Invalid port!", 400)
+    return port
+
+
+def ftp_connect(host, log_file, port):
+    """Connects Client to Server."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        ip = socket.gethostbyname(host)
+    except Exception as e:
+        error_quit("Invalid or unknown host address!", 400)
+    s.connect((ip, port))
 
 
 ''' DEBUG '''
@@ -112,7 +143,8 @@ def print_debug(msg):
 def main():
     print_debug("Starting...")
     host, log_file, port = parse_args()
-    logger = Logger()
+    ftp_connect(host, log_file, port)
+    logger = Logger(log_file)
     ftp = FTP()
 
 
