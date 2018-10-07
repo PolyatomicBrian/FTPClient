@@ -10,7 +10,17 @@ import datetime  # Used for getting date & time for Logs.
 
 ''' GLOBALS '''
 
-is_debug = True
+IS_DEBUG = True
+DEFAULT_FTP_PORT = 21
+
+# Program Arguments
+REQUIRED_NUM_ARGS = 3
+MAXIMUM_NUM_ARGS = 4
+
+PROGRAM_ARG_NUM = 0  # ie sys.argv[0]
+HOST_ARG_NUM = 1
+LOG_ARG_NUM = 2
+PORT_ARG_NUM = 3
 
 
 ''' CLASSES '''
@@ -80,7 +90,7 @@ class FTP:
 
 def usage():
     """Prints the usage/help message for this program."""
-    program_name = sys.argv[0]
+    program_name = sys.argv[PROGRAM_ARG_NUM]
     print("Usage:")
     print("%s IP LOGFILE [PORT]" % program_name)
     print("  IP : IP address of host running the desired FTP Server.")
@@ -92,19 +102,18 @@ def usage():
 def error_quit(msg, code):
     """Prints out an error message, the program usage, and terminates with an
     error code of `code`."""
-    print(msg)
+    print("[!] %s" % msg)
     usage()
     exit(code)
 
 
 def parse_args():
     """Gets and returns provided arguments."""
-    if len(sys.argv) < 3 or len(sys.argv) > 4:
+    if len(sys.argv) < REQUIRED_NUM_ARGS or len(sys.argv) > MAXIMUM_NUM_ARGS:
         error_quit("Incorrect number of arguments!", 400)
-    DEFAULT_FTP_PORT = 21
-    port = sys.argv[3] if len(sys.argv) == 4 else DEFAULT_FTP_PORT
+    port = sys.argv[PORT_ARG_NUM] if len(sys.argv) == MAXIMUM_NUM_ARGS else DEFAULT_FTP_PORT
     port = validate_port(port)
-    host, log_file = sys.argv[1], sys.argv[2]
+    host, log_file = sys.argv[HOST_ARG_NUM], sys.argv[LOG_ARG_NUM]
     return host, log_file, port
 
 
@@ -114,6 +123,8 @@ def validate_port(port):
         port = int(port)
         if port > 65535 or port < 0:
             raise ValueError('Port is not between 0 and 65535!')
+    except ValueError as e:
+        error_quit("Port is not between 0 and 65535!", 400)
     except Exception as e:
         error_quit("Invalid port!", 400)
     return port
@@ -126,14 +137,20 @@ def ftp_connect(host, log_file, port):
         ip = socket.gethostbyname(host)
     except Exception as e:
         error_quit("Invalid or unknown host address!", 400)
-    s.connect((ip, port))
+    try:
+        s.connect((ip, port))
+    except socket.error as e:
+        error_quit("Connection refused, did you specify the correct host and port?", 400)
+    except Exception as e:
+        error_quit("Unable to connect.", 400)
+
 
 
 ''' DEBUG '''
 
 
 def print_debug(msg):
-    if is_debug:
+    if IS_DEBUG:
         print(msg)
 
 
