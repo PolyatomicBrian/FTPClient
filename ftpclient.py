@@ -16,9 +16,19 @@ DEFAULT_FTP_PORT = 21
 
 # FTP Server Response Codes referenced in this program.
 # Found here: https://en.wikipedia.org/wiki/List_of_FTP_server_return_codes
-FTP_STATUS_CODE = {
+FTP_STATUS_CODES = {
     "SUCCESSFUL_LOGIN":  "230",
     "SUCCESSFUL_LOGOUT": "231"
+}
+
+MAIN_MENU_SELECTIONS = {
+    "1": "Download a file.",
+    "2": "Upload a file.",
+    "3": "List files in current directory.",
+    "4": "Change directory.",
+    "5": "Print working directory.",
+    "6": "Get server info.",
+    "7": "Quit."
 }
 
 # Program Arguments
@@ -39,7 +49,9 @@ class Logger:
     # Class vars: log_file
     def __init__(self, log_file):
         print_debug("Created Logger")
-        self.log_file = log_file
+        # Create file
+        f = open(log_file, "a")
+        self.file = f
 
     def get_date_time(self):
         """Returns datetime as a string in the format: 9/25/18 22:00:00.0002"""
@@ -47,23 +59,35 @@ class Logger:
         now_formatted = now.strftime("%m/%d/%Y %H:%M:%S.%f")
         return now_formatted
 
+    def log(self, msg):
+        """Writes datetime & message to log."""
+        current_datetime = self.get_date_time()
+        self.file.write("%s %s\n" % (current_datetime, msg))
+
+    def close_file(self):
+        """Simply closes the file."""
+        self.file.close()
+
 
 class FTP:
     """Executes defined FTP Client commands and handles Server's responses."""
 
-    def __init__(self, host, log_file, port):
+    def __init__(self, host, logger, port):
         """Create socket and invoke connection."""
+        self.logger = logger
+        self.logger.log("Connecting to %s" % host)
         try:
             self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.ftp_connect(host, log_file, port)
+            self.ftp_connect(host, logger, port)
             msg_rec = repr(self.s.recv(1024))
         except socket.error as e:
             error_quit("Unable to connect due to: %s" % e, 500)
+        self.logger.log("Received: %s" % msg_rec)
         print_debug(msg_rec)
         if not msg_rec:
             self.close_socket()
 
-    def ftp_connect(self, host, log_file, port):
+    def ftp_connect(self, host, logger, port):
         """Connects Client to Server."""
         try:
             ip = socket.gethostbyname(host)
@@ -80,16 +104,20 @@ class FTP:
 
     def user_cmd(self, username):
         print_debug("Executing USER")
-        self.s.send("USER %s\r\n" % username)
+        command = "USER %s\r\n" % username
+        self.s.send(command)
+        self.logger.log("Sent: %s" % command)
         msg_rec = repr(self.s.recv(1024))
-        print_debug(msg_rec)
+        self.logger.log("Received: %s" % msg_rec)
         return msg_rec
 
     def pass_cmd(self, password):
         print_debug("Executing PASS")
-        self.s.send("PASS %s\r\n" % password)
+        command = "PASS %s\r\n" % password
+        self.s.send(command)
+        self.logger.log("Sent: %s" % command)
         msg_rec = repr(self.s.recv(1024))
-        print_debug(msg_rec)
+        self.logger.log("Received: %s" % msg_rec)
         return msg_rec
 
     def cwd_cmd(self):
@@ -175,7 +203,7 @@ def validate_port(port):
     return port
 
 
-def prompt_user():
+def prompt_username():
     """Prompt user for Username."""
     msg = "Enter Username: "
     username = raw_input(msg)
@@ -197,22 +225,30 @@ def get_ftp_server_code(resp_msg):
 def login(ftp):
     """Prompt user for Username & Password, authenticate with FTP server."""
     # Get username
-    username = prompt_user()
+    username = prompt_username()
     ftp.user_cmd(username)
     # Get password
     password = prompt_pass()
     pass_data = ftp.pass_cmd(password)
     # Retry inputs if unsuccessful authentication.
-    while get_ftp_server_code(pass_data) != FTP_STATUS_CODE["SUCCESSFUL_LOGIN"]:
+    while get_ftp_server_code(pass_data) != FTP_STATUS_CODES["SUCCESSFUL_LOGIN"]:
         print_debug("Login incorrect, try again.")
-        username = prompt_user()
+        username = prompt_username()
         ftp.user_cmd(username)
         password = prompt_pass()
         pass_data = ftp.pass_cmd(password)
 
 
+def menu_main():
+    print("What would you like to do?")
+    for key in sorted(MAIN_MENU_SELECTIONS):
+        print("[%s] %s" % (key, MAIN_MENU_SELECTIONS[key]))
+
+
+
 def do_ftp(ftp):
     login(ftp)
+    menu_main()
 
 
 ''' DEBUG '''
@@ -230,7 +266,7 @@ def main():
     print_debug("Starting...")
     host, log_file, port = parse_args()
     logger = Logger(log_file)
-    ftp = FTP(host, log_file, port)
+    ftp = FTP(host, logger, port)
     do_ftp(ftp)
 
 
