@@ -130,8 +130,13 @@ class FTP:
 
     def quit_cmd(self):
         print_debug("Executing QUIT")
-        # TODO Perform checks to ensure it's ok to quit.
+        command = "QUIT\r\n"
+        self.s.send(command)
+        self.logger.log("Sent: %s" % command)
+        msg_rec = repr(self.s.recv(1024))
+        self.logger.log("Received: %s" % msg_rec)
         self.close_socket()
+        return msg_rec
 
     def pasv_cmd(self):
         print_debug("Executing PASV")
@@ -153,7 +158,7 @@ class FTP:
 
     def pwd_cmd(self):
         print_debug("Executing PWD")
-        command = "PWD"
+        command = "PWD\r\n"
         self.s.send(command)
         self.logger.log("Sent: %s" % command)
         msg_rec = repr(self.s.recv(1024))
@@ -262,20 +267,23 @@ def do_upload(ftp):
 
 def do_list(ftp):
     print_debug("Unfinished List")
+    main_menu(ftp)
 
 
 def do_cwd(ftp):
     print_debug("Unfinished CWD")
+    main_menu(ftp)
 
 
 def do_pwd(ftp):
-    # TODO Currently not working properly.
     print_debug("Unfinished PWD")
-    ftp.pwd_cmd()
+    print(ftp.pwd_cmd())
+    main_menu(ftp)
 
 
 def do_syst(ftp):
     print_debug("Unfinished SYST")
+    main_menu(ftp)
 
 
 def do_quit(ftp):
