@@ -28,7 +28,7 @@ FTP_STATUS_CODES = {
 MAIN_MENU_SELECTIONS = {
     "1": ["Download a file.", "do_download"],
     "2": ["Upload a file.", "do_upload"],
-    "3": ["List files in current directory.", "do_list"],
+    "3": ["List files.", "do_list"],
     "4": ["Change directory.", "do_cwd"],
     "5": ["Print working directory.", "do_pwd"],
     "6": ["Get server info.", "do_syst"],
@@ -107,34 +107,35 @@ class FTP:
         except Exception:
             error_quit("Unable to connect.", 400)
 
-    def user_cmd(self, username):
-        print_debug("Executing USER")
-        command = "USER %s\r\n" % username
+    def send_and_log(self, command):
         self.s.send(command)
         self.logger.log("Sent: %s" % command)
         msg_rec = repr(self.s.recv(1024))
         self.logger.log("Received: %s" % msg_rec)
+        return msg_rec
+
+    def user_cmd(self, username):
+        print_debug("Executing USER")
+        command = "USER %s\r\n" % username
+        msg_rec = self.send_and_log(command)
         return msg_rec
 
     def pass_cmd(self, password):
         print_debug("Executing PASS")
         command = "PASS %s\r\n" % password
-        self.s.send(command)
-        self.logger.log("Sent: %s" % command)
-        msg_rec = repr(self.s.recv(1024))
-        self.logger.log("Received: %s" % msg_rec)
+        msg_rec = self.send_and_log(command)
         return msg_rec
 
-    def cwd_cmd(self):
+    def cwd_cmd(self, new_dir):
         print_debug("Executing CWD")
+        command = "CWD %s\r\n" % new_dir
+        msg_rec = self.send_and_log(command)
+        return msg_rec
 
     def quit_cmd(self):
         print_debug("Executing QUIT")
         command = "QUIT\r\n"
-        self.s.send(command)
-        self.logger.log("Sent: %s" % command)
-        msg_rec = repr(self.s.recv(1024))
-        self.logger.log("Received: %s" % msg_rec)
+        msg_rec = self.send_and_log(command)
         self.close_socket()
         return msg_rec
 
@@ -159,17 +160,20 @@ class FTP:
     def pwd_cmd(self):
         print_debug("Executing PWD")
         command = "PWD\r\n"
-        self.s.send(command)
-        self.logger.log("Sent: %s" % command)
-        msg_rec = repr(self.s.recv(1024))
-        self.logger.log("Received: %s" % msg_rec)
+        msg_rec = self.send_and_log(command)
         return msg_rec
 
     def syst_cmd(self):
         print_debug("Executing SYST")
 
-    def list_cmd(self):
+    def list_cmd(self, dir=None):
         print_debug("Executing LIST")
+        if dir:
+            command = "LIST %s\r\n" % dir
+        else:
+            command = "LIST\r\n"
+        msg_rec = self.send_and_log(command)
+        return msg_rec
 
     def close_socket(self):
         print_debug("Closing socket.")
@@ -259,25 +263,31 @@ def login(ftp):
 
 def do_download(ftp):
     print_debug("Unfinished Download")
+    main_menu(ftp)
 
 
 def do_upload(ftp):
     print_debug("Unfinished Upload")
+    main_menu(ftp)
 
 
 def do_list(ftp):
-    print_debug("Unfinished List")
+    dir = raw_input("List files in what directory (Current)? ")
+    output = ftp.list_cmd(dir)
+    print("%s\n" % output)
     main_menu(ftp)
 
 
 def do_cwd(ftp):
-    print_debug("Unfinished CWD")
+    new_dir = raw_input("What directory do you want to change to? ")
+    output = ftp.cwd_cmd(new_dir)
+    print("%s\n" % output)
     main_menu(ftp)
 
 
 def do_pwd(ftp):
-    print_debug("Unfinished PWD")
-    print(ftp.pwd_cmd())
+    output = ftp.pwd_cmd()
+    print("%s\n" % output)
     main_menu(ftp)
 
 
