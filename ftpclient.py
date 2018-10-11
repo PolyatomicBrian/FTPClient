@@ -1,7 +1,8 @@
 #!/usr/bin/env python2
 
 """ftpclient.py: Acts as a client for connecting to an FTP server. Adheres to
-                 the FTP Protocol defined in RFC 959 and RFC 2428."""
+                 the FTP Protocol defined in RFC 959 and RFC 2428.
+   Author: Brian Jopling, October 2018."""
 
 import socket    # Used for network connections.
 import sys       # Used for arg parsing.
@@ -21,14 +22,17 @@ FTP_STATUS_CODES = {
     "SUCCESSFUL_LOGOUT": "231"
 }
 
+# Actions User can make when at the Main Menu.
+# Adheres to the format:
+# { choice_number : [display_msg, function_to_call] }
 MAIN_MENU_SELECTIONS = {
-    "1": "Download a file.",
-    "2": "Upload a file.",
-    "3": "List files in current directory.",
-    "4": "Change directory.",
-    "5": "Print working directory.",
-    "6": "Get server info.",
-    "7": "Quit."
+    "1": ["Download a file.", "do_download"],
+    "2": ["Upload a file.", "do_upload"],
+    "3": ["List files in current directory.", "do_list"],
+    "4": ["Change directory.", "do_cwd"],
+    "5": ["Print working directory.", "do_pwd"],
+    "6": ["Get server info.", "do_syst"],
+    "7": ["Quit.", "do_quit"]
 }
 
 # Program Arguments
@@ -74,6 +78,7 @@ class FTP:
 
     def __init__(self, host, logger, port):
         """Create socket and invoke connection."""
+        # TODO break this function into two others.
         self.logger = logger
         self.logger.log("Connecting to %s" % host)
         try:
@@ -125,6 +130,8 @@ class FTP:
 
     def quit_cmd(self):
         print_debug("Executing QUIT")
+        # TODO Perform checks to ensure it's ok to quit.
+        self.close_socket()
 
     def pasv_cmd(self):
         print_debug("Executing PASV")
@@ -146,6 +153,12 @@ class FTP:
 
     def pwd_cmd(self):
         print_debug("Executing PWD")
+        command = "PWD"
+        self.s.send(command)
+        self.logger.log("Sent: %s" % command)
+        msg_rec = repr(self.s.recv(1024))
+        self.logger.log("Received: %s" % msg_rec)
+        return msg_rec
 
     def syst_cmd(self):
         print_debug("Executing SYST")
@@ -239,16 +252,56 @@ def login(ftp):
         pass_data = ftp.pass_cmd(password)
 
 
-def menu_main():
+def do_download(ftp):
+    print_debug("Unfinished Download")
+
+
+def do_upload(ftp):
+    print_debug("Unfinished Upload")
+
+
+def do_list(ftp):
+    print_debug("Unfinished List")
+
+
+def do_cwd(ftp):
+    print_debug("Unfinished CWD")
+
+
+def do_pwd(ftp):
+    # TODO Currently not working properly.
+    print_debug("Unfinished PWD")
+    ftp.pwd_cmd()
+
+
+def do_syst(ftp):
+    print_debug("Unfinished SYST")
+
+
+def do_quit(ftp):
+    ftp.quit_cmd()
+
+
+def handle_main_menu_choice(choice, ftp):
+    """Calls function associated with user's Main Menu choice."""
+    function_to_call = MAIN_MENU_SELECTIONS[choice][1]
+    globals()[function_to_call](ftp)  # Call the function.
+
+
+def main_menu(ftp):
+    """Displays Main Menu and prompts user to select an action."""
     print("What would you like to do?")
     for key in sorted(MAIN_MENU_SELECTIONS):
-        print("[%s] %s" % (key, MAIN_MENU_SELECTIONS[key]))
-
+        print("[%s] %s" % (key, MAIN_MENU_SELECTIONS[key][0]))
+    choice = raw_input("> ")
+    while choice not in list(MAIN_MENU_SELECTIONS.keys()):
+        choice = raw_input("> ")
+    handle_main_menu_choice(choice, ftp)
 
 
 def do_ftp(ftp):
     login(ftp)
-    menu_main()
+    main_menu(ftp)
 
 
 ''' DEBUG '''
