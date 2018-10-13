@@ -83,16 +83,18 @@ class FTP:
         self.logger.log("Connecting to %s" % host)
         try:
             self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.ftp_connect(host, logger, port)
+            self.s_pasv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.s_port = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.ftp_connect(self.s, host, port)
             msg_rec = repr(self.s.recv(1024))
         except socket.error as e:
             error_quit("Unable to connect due to: %s" % e, 500)
         self.logger.log("Received: %s" % msg_rec)
         print_debug(msg_rec)
         if not msg_rec:
-            self.close_socket()
+            self.close_socket(self.s)
 
-    def ftp_connect(self, host, logger, port):
+    def ftp_connect(self, sock, host, port):
         """Connects Client to Server."""
         try:
             ip = socket.gethostbyname(host)
@@ -101,46 +103,81 @@ class FTP:
         except Exception:
             error_quit("Invalid or unknown host address!", 400)
         try:
-            self.s.connect((ip, port))
+            sock.connect((ip, port))
         except socket.error:
             error_quit("Connection refused, did you specify the correct host and port?", 400)
         except Exception:
-            error_quit("Unable to connect.", 400)
+            error_quit("Unable to connect!", 400)
 
-    def send_and_log(self, command):
-        self.s.send(command)
-        self.logger.log("Sent: %s" % command)
-        msg_rec = repr(self.s.recv(1024))
+    def send_and_log(self, sock, command):
+        """Send command to socket, return server's
+           response from command channel."""
+        sock.send(command)
+        self.logger.log("Sent: %r" % command)
+        msg_rec = repr(sock.recv(1024))
         self.logger.log("Received: %s" % msg_rec)
         return msg_rec
+
+    def get_from_data_channel(self, sock):
+        """Return server's response from data channel."""
+        msg_rec = repr(sock.recv(1024))
+        self.logger.log("Received: %s" % msg_rec)
+        return msg_rec
+
+    def pasv_connection(self, pasv_ip, pasv_port):
+        """Connect pasv socket to data channel port for data to be read."""
+        self.ftp_connect(self.s_pasv, pasv_ip, pasv_port)
+
+    def parse_pasv_resp(self, msg_rec):
+        """Helper for pasv_cmd() to parse out IP and Port of data channel."""
+        num_ip_bytes = 4
+        index_of_port_1 = 4
+        index_of_port_2 = 5
+        try:
+            host_info = msg_rec[msg_rec.index("(") + 1:msg_rec.rindex(")")]
+            host_info_split = host_info.split(',')
+            host_ip_list = [host_info_split[i] for i in range(num_ip_bytes)]
+            host_ip = '.'.join(host_ip_list)
+            host_port = int(host_info_split[index_of_port_1]) * 256 + \
+                        int(host_info_split[index_of_port_2])
+        except:
+            return "", ""
+        return host_ip, host_port
 
     def user_cmd(self, username):
         print_debug("Executing USER")
         command = "USER %s\r\n" % username
-        msg_rec = self.send_and_log(command)
+        msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def pass_cmd(self, password):
         print_debug("Executing PASS")
         command = "PASS %s\r\n" % password
-        msg_rec = self.send_and_log(command)
+        msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def cwd_cmd(self, new_dir):
         print_debug("Executing CWD")
         command = "CWD %s\r\n" % new_dir
-        msg_rec = self.send_and_log(command)
+        msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def quit_cmd(self):
         print_debug("Executing QUIT")
         command = "QUIT\r\n"
-        msg_rec = self.send_and_log(command)
-        self.close_socket()
+        msg_rec = self.send_and_log(self.s, command)
+        self.close_socket(self.s)
+        self.close_socket(self.s_pasv)
+        self.close_socket(self.s_port)
         return msg_rec
 
     def pasv_cmd(self):
         print_debug("Executing PASV")
+        command = "PASV\r\n"
+        msg_rec = self.send_and_log(self.s, command)
+        pasv_ip, pasv_port = self.parse_pasv_resp(msg_rec)
+        self.pasv_connection(pasv_ip, pasv_port)
+        return msg_rec
 
     def epsv_cmd(self):
         print_debug("Executing EPSV")
@@ -160,11 +197,14 @@ class FTP:
     def pwd_cmd(self):
         print_debug("Executing PWD")
         command = "PWD\r\n"
-        msg_rec = self.send_and_log(command)
+        msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def syst_cmd(self):
         print_debug("Executing SYST")
+        command = "SYST\r\n"
+        msg_rec = self.send_and_log(self.s, command)
+        return msg_rec
 
     def list_cmd(self, dir=None):
         print_debug("Executing LIST")
@@ -172,12 +212,13 @@ class FTP:
             command = "LIST %s\r\n" % dir
         else:
             command = "LIST\r\n"
-        msg_rec = self.send_and_log(command)
+        msg_rec = self.send_and_log(self.s, command)
+        print(self.get_from_data_channel(self.s_pasv).decode('string_escape')[1:-1])
         return msg_rec
 
-    def close_socket(self):
+    def close_socket(self, sock):
         print_debug("Closing socket.")
-        self.s.close()
+        sock.close()
 
 
 ''' FUNCTIONS '''
@@ -272,8 +313,13 @@ def do_upload(ftp):
 
 
 def do_list(ftp):
-    dir = raw_input("List files in what directory (Current)? ")
-    output = ftp.list_cmd(dir)
+    output = ftp.pasv_cmd()
+    print("%s\n" % output)
+    dir = raw_input("Enter a directory or file you want to list (blank=current): ")
+    if dir:
+        output = ftp.list_cmd(dir)
+    else:
+        output = ftp.list_cmd()
     print("%s\n" % output)
     main_menu(ftp)
 
@@ -292,7 +338,8 @@ def do_pwd(ftp):
 
 
 def do_syst(ftp):
-    print_debug("Unfinished SYST")
+    output = ftp.syst_cmd()
+    print("%s\n" % output)
     main_menu(ftp)
 
 
