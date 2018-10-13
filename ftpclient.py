@@ -8,16 +8,19 @@ import socket    # Used for network connections.
 import sys       # Used for arg parsing.
 import datetime  # Used for getting date & time for Logs.
 import getpass   # Used for hiding inputted password.
-
+import os        # Used for parsing paths / file names.
 
 ''' GLOBALS '''
 
 IS_DEBUG = True
 DEFAULT_FTP_PORT = 21
 
+BUFF_SIZE = 1024
+
 # FTP Server Response Codes referenced in this program.
 # Found here: https://en.wikipedia.org/wiki/List_of_FTP_server_return_codes
 FTP_STATUS_CODES = {
+    "SUCCESSFUL_RETR":   "150",
     "SUCCESSFUL_LOGIN":  "230",
     "SUCCESSFUL_LOGOUT": "231"
 }
@@ -32,7 +35,18 @@ MAIN_MENU_SELECTIONS = {
     "4": ["Change directory.", "do_cwd"],
     "5": ["Print working directory.", "do_pwd"],
     "6": ["Get server info.", "do_syst"],
-    "7": ["Quit.", "do_quit"]
+    "7": ["Get help.", "do_help"],
+    "8": ["Quit.", "do_quit"]
+}
+
+DOWNLOAD_MENU_SELECTIONS = {
+    "1": "ASCII",
+    "2": "BINARY"
+}
+
+TRANSFER_MENU_SELECTIONS = {
+    "1": "Active  (PORT)",
+    "2": "Passive (PASV)"
 }
 
 # Program Arguments
@@ -83,10 +97,8 @@ class FTP:
         self.logger.log("Connecting to %s" % host)
         try:
             self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.s_pasv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.s_port = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.ftp_connect(self.s, host, port)
-            msg_rec = repr(self.s.recv(1024))
+            msg_rec = repr(self.s.recv(BUFF_SIZE))
         except socket.error as e:
             error_quit("Unable to connect due to: %s" % e, 500)
         self.logger.log("Received: %s" % msg_rec)
@@ -106,27 +118,32 @@ class FTP:
             sock.connect((ip, port))
         except socket.error:
             error_quit("Connection refused, did you specify the correct host and port?", 400)
-        except Exception:
-            error_quit("Unable to connect!", 400)
+        except Exception as e:
+            error_quit("Unable to connect due to %s" % e, 400)
 
     def send_and_log(self, sock, command):
         """Send command to socket, return server's
            response from command channel."""
-        sock.send(command)
-        self.logger.log("Sent: %r" % command)
-        msg_rec = repr(sock.recv(1024))
-        self.logger.log("Received: %s" % msg_rec)
+        try:
+            sock.send(command)
+            self.logger.log("Sent: %r" % command)
+            msg_rec = repr(sock.recv(BUFF_SIZE))
+            self.logger.log("Received: %s" % msg_rec)
+        except socket.error:
+            error_quit("Connection error, unable to send command.", 400)
+        except Exception:
+            error_quit("An unknown error has occurred.", 500)
         return msg_rec
 
     def get_from_data_channel(self, sock):
         """Return server's response from data channel."""
-        msg_rec = repr(sock.recv(1024))
+        msg_rec = repr(sock.recv(BUFF_SIZE))
         self.logger.log("Received: %s" % msg_rec)
         return msg_rec
 
-    def pasv_connection(self, pasv_ip, pasv_port):
+    def pasv_connection(self, sock, pasv_ip, pasv_port):
         """Connect pasv socket to data channel port for data to be read."""
-        self.ftp_connect(self.s_pasv, pasv_ip, pasv_port)
+        self.ftp_connect(sock, pasv_ip, pasv_port)
 
     def parse_pasv_resp(self, msg_rec):
         """Helper for pasv_cmd() to parse out IP and Port of data channel."""
@@ -167,17 +184,17 @@ class FTP:
         command = "QUIT\r\n"
         msg_rec = self.send_and_log(self.s, command)
         self.close_socket(self.s)
-        self.close_socket(self.s_pasv)
-        self.close_socket(self.s_port)
         return msg_rec
 
     def pasv_cmd(self):
         print_debug("Executing PASV")
         command = "PASV\r\n"
         msg_rec = self.send_and_log(self.s, command)
+        print_debug(msg_rec)
+        sock = new_socket()
         pasv_ip, pasv_port = self.parse_pasv_resp(msg_rec)
-        self.pasv_connection(pasv_ip, pasv_port)
-        return msg_rec
+        self.pasv_connection(sock, pasv_ip, pasv_port)
+        return msg_rec, sock
 
     def epsv_cmd(self):
         print_debug("Executing EPSV")
@@ -188,11 +205,28 @@ class FTP:
     def eprt_cmd(self):
         print_debug("Executing EPRT")
 
-    def retr_cmd(self):
+    def retr_cmd(self, sock, path, is_binary=False):
         print_debug("Executing RETR")
+        command = "RETR %s\r\n" % path
+        msg_rec = self.send_and_log(self.s, command)
+        print_debug(msg_rec)
+        if get_ftp_server_code(msg_rec) == FTP_STATUS_CODES["SUCCESSFUL_RETR"]:
+            if is_binary:
+                data_rec = self.get_from_data_channel(sock)[1:-1]
+            else:
+                data_rec = self.get_from_data_channel(sock).decode('string_escape')[1:-1]
+            print(data_rec)
+            self.close_socket(sock)
+            return msg_rec, data_rec
+        else:
+            return "File not found or inaccessible.", None
 
-    def stor_cmd(self):
+    def stor_cmd(self, sock):
         print_debug("Executing STOR")
+        command = "STOR %s\r\n" % dir
+        msg_rec = self.send_and_log(self.s, command)
+        print(self.get_from_data_channel(sock).decode('string_escape')[1:-1])
+        return msg_rec
 
     def pwd_cmd(self):
         print_debug("Executing PWD")
@@ -206,19 +240,37 @@ class FTP:
         msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
-    def list_cmd(self, dir=None):
+    def help_cmd(self, cmd=None):
+        print_debug("Executing HELP")
+        if cmd:
+            command = "HELP %s\r\n" % cmd
+        else:
+            command = "HELP\r\n"
+        msg_rec = self.send_and_log(self.s, command)
+        return msg_rec
+
+    def list_cmd(self, sock, path=None):
         print_debug("Executing LIST")
-        if dir:
-            command = "LIST %s\r\n" % dir
+        if path:
+            command = "LIST %s\r\n" % path
         else:
             command = "LIST\r\n"
         msg_rec = self.send_and_log(self.s, command)
-        print(self.get_from_data_channel(self.s_pasv).decode('string_escape')[1:-1])
+        print(self.get_from_data_channel(sock).decode('string_escape')[1:-1])
+        self.close_socket(sock)
         return msg_rec
 
     def close_socket(self, sock):
         print_debug("Closing socket.")
-        sock.close()
+        try:
+            sock.close()
+            # If data socket being closed, print status message.
+            if sock != self.s:
+                print_debug(repr(self.s.recv(BUFF_SIZE)))
+        except socket.error:
+            error_quit("Error closing socket!", 500)
+        except Exception:
+            error_quit("An unknown error occurred while closing the socket!", 500)
 
 
 ''' FUNCTIONS '''
@@ -302,30 +354,100 @@ def login(ftp):
         pass_data = ftp.pass_cmd(password)
 
 
+def new_socket():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    return s
+
+
+def transfer_menu():
+    """Displays Download Menu and prompts user to select an action."""
+    print("What type of transfer do you want to use?")
+    for key in sorted(TRANSFER_MENU_SELECTIONS):
+        print("[%s] %s" % (key, TRANSFER_MENU_SELECTIONS[key]))
+    choice = raw_input("> ")
+    while choice not in list(TRANSFER_MENU_SELECTIONS.keys()):
+        choice = raw_input("> ")
+    return choice
+
+
+def download_menu():
+    """Displays Download Menu and prompts user to select an action."""
+    print("What type of file are you downloading?")
+    for key in sorted(DOWNLOAD_MENU_SELECTIONS):
+        print("[%s] %s" % (key, DOWNLOAD_MENU_SELECTIONS[key]))
+    choice = raw_input("> ")
+    while choice not in list(DOWNLOAD_MENU_SELECTIONS.keys()):
+        choice = raw_input("> ")
+    return choice
+
+
 def do_download(ftp):
-    print_debug("Unfinished Download")
+    # Active (PORT) or Passive (PASV)?
+    transfer_type = transfer_menu()
+    output, sock = ftp.pasv_cmd() if transfer_type == "2" else ftp.port_cmd()
+    print("%s\n" % output)
+
+    # ASCII or Binary file?
+    file_type = download_menu()
+    is_binary = True if file_type == "2" else False
+
+    # What file to download?
+    path = raw_input("What file do you want to download?\n> ")
+    while not path:
+        path = raw_input("What file do you want to download?\n> ")
+    msg_rec, data_rec = ftp.retr_cmd(sock, path, is_binary)
+    print("%s\n" % msg_rec)
+
+    # Download file.
+    if data_rec:
+        print("%s\n" % data_rec)
+        write_to_local(path, data_rec, is_binary)
     main_menu(ftp)
 
 
+def write_to_local(path, data_rec, is_binary=False):
+    path, filename = os.path.split(path)
+    with open(filename, 'wb') as f:
+        f.write(data_rec)
+
+
 def do_upload(ftp):
-    print_debug("Unfinished Upload")
+    # Active (PORT) or Passive (PASV)?
+    transfer_type = transfer_menu()
+    output, sock = ftp.port_cmd() if transfer_type == "1" else ftp.pasv_cmd()
+    print("%s\n" % output)
+
+    # What file to upload?
+    path = raw_input("What file do you want to upload?\n> ")
+    while not path:
+        path = raw_input("What file do you want to upload?\n> ")
+    msg_rec, data_rec = ftp.stor_cmd(sock, path)
+    print("%s\n" % msg_rec)
+
+    # Upload file.
+    if data_rec:
+        print("%s\n" % data_rec)
+        # todo actually upload
     main_menu(ftp)
 
 
 def do_list(ftp):
-    output = ftp.pasv_cmd()
+    # Active (PORT) or Passive (PASV)?
+    transfer_type = transfer_menu()
+    output, sock = ftp.port_cmd() if transfer_type == "1" else ftp.pasv_cmd()
     print("%s\n" % output)
-    dir = raw_input("Enter a directory or file you want to list (blank=current): ")
-    if dir:
-        output = ftp.list_cmd(dir)
+
+    path = raw_input("What directory or file do you want to list (blank=current)?\n> ")
+    if path:
+        output = ftp.list_cmd(sock, path)
     else:
-        output = ftp.list_cmd()
+        output = ftp.list_cmd(sock)
     print("%s\n" % output)
     main_menu(ftp)
 
 
 def do_cwd(ftp):
-    new_dir = raw_input("What directory do you want to change to? ")
+    new_dir = raw_input("What directory do you want to change to?\n> ")
     output = ftp.cwd_cmd(new_dir)
     print("%s\n" % output)
     main_menu(ftp)
@@ -339,6 +461,16 @@ def do_pwd(ftp):
 
 def do_syst(ftp):
     output = ftp.syst_cmd()
+    print("%s\n" % output)
+    main_menu(ftp)
+
+
+def do_help(ftp):
+    cmd = raw_input("What command do you need help with (blank=general)?\n> ")
+    if cmd:
+        output = ftp.help_cmd(cmd)
+    else:
+        output = ftp.help_cmd()
     print("%s\n" % output)
     main_menu(ftp)
 
