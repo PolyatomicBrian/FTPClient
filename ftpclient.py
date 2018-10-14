@@ -17,8 +17,7 @@ DEFAULT_FTP_PORT = 21
 
 BUFF_SIZE = 1024
 
-# FTP Server Response Codes referenced in this program.
-# Found here: https://en.wikipedia.org/wiki/List_of_FTP_server_return_codes
+# FTP Server Response Codes directly referenced in this program.
 FTP_STATUS_CODES = {
     "SUCCESSFUL_RETR":   "150",
     "SUCCESSFUL_LOGIN":  "230",
@@ -64,7 +63,8 @@ PORT_ARG_NUM = 3
 
 class Logger:
     """Performs necessary logging of communication between Client & Server."""
-    # Class vars: log_file
+    # Class vars:
+    #   * file - File
     def __init__(self, log_file):
         print_debug("Created Logger")
         # Create file
@@ -89,7 +89,9 @@ class Logger:
 
 class FTP:
     """Executes defined FTP Client commands and handles Server's responses."""
-
+    # Class vars:
+    #   * logger - Logger
+    #   * s      - socket
     def __init__(self, host, logger, port):
         """Create socket and invoke connection."""
         # TODO break this function into two others.
@@ -137,13 +139,20 @@ class FTP:
 
     def get_from_data_channel(self, sock):
         """Return server's response from data channel."""
-        msg_rec = repr(sock.recv(BUFF_SIZE))
+        msg_rec = ""
+        while not msg_rec.endswith("\\r\\n'"):
+            msg_rec += repr(sock.recv(BUFF_SIZE))
         self.logger.log("Received: %s" % msg_rec)
         return msg_rec
 
     def pasv_connection(self, sock, pasv_ip, pasv_port):
         """Connect pasv socket to data channel port for data to be read."""
         self.ftp_connect(sock, pasv_ip, pasv_port)
+
+    def port_connection(self, sock):
+        """Bind port socket so server can connect to it."""
+        sock.bind(('', 0))  # Bind to OS-assigned available & random port.
+        sock.listen(1)
 
     def parse_pasv_resp(self, msg_rec):
         """Helper for pasv_cmd() to parse out IP and Port of data channel."""
@@ -157,9 +166,27 @@ class FTP:
             host_ip = '.'.join(host_ip_list)
             host_port = int(host_info_split[index_of_port_1]) * 256 + \
                         int(host_info_split[index_of_port_2])
-        except:
+        except Exception:
             return "", ""
         return host_ip, host_port
+
+    def parse_port_req(self, sock):
+        """Helper for port_cmd() to parse in IP and Port of data channel."""
+        try:
+            host_ip = self.s.getsockname()[0]  # Get local IPv4 addr of client.
+            host_port = sock.getsockname()[1]  # Get opened port of socket.
+            # PORT requires parameters split up as:
+            # octet1,octet2,octet3,octet4,p1,p2
+            list_csv_ip = host_ip.split('.')   # Split octets into a list.
+            port_params = ""
+            for octet in list_csv_ip:
+                port_params += octet + ","
+            p1 = str((host_port - (host_port % 256)) / 256)
+            p2 = str(host_port % 256)
+            port_params += p1 + "," + p2
+        except:
+            return "", ""
+        return port_params, host_ip, host_port
 
     def user_cmd(self, username):
         print_debug("Executing USER")
@@ -201,22 +228,32 @@ class FTP:
 
     def port_cmd(self):
         print_debug("Executing PORT")
+        sock = new_socket()
+        self.port_connection(sock)
+        port_params, host_ip, host_port = self.parse_port_req(sock)
+        print_debug("PARAMS: " + port_params)
+        command = "PORT %s\r\n" % port_params
+        msg_rec = self.send_and_log(self.s, command)
+        print_debug(msg_rec)
+        return msg_rec, sock
 
     def eprt_cmd(self):
         print_debug("Executing EPRT")
 
-    def retr_cmd(self, sock, path, is_binary=False):
+    def retr_cmd(self, sock, path, transfer_type):
         print_debug("Executing RETR")
         command = "RETR %s\r\n" % path
         msg_rec = self.send_and_log(self.s, command)
         print_debug(msg_rec)
         if get_ftp_server_code(msg_rec) == FTP_STATUS_CODES["SUCCESSFUL_RETR"]:
-            if is_binary:
-                data_rec = self.get_from_data_channel(sock)[1:-1]
+            if transfer_type == "1":
+                conn, sockaddr = sock.accept()
+                data_rec = self.get_from_data_channel(conn).decode('string_escape')[1:-1]
+                self.close_socket(conn)
             else:
                 data_rec = self.get_from_data_channel(sock).decode('string_escape')[1:-1]
+                self.close_socket(sock)
             print(data_rec)
-            self.close_socket(sock)
             return msg_rec, data_rec
         else:
             return "File not found or inaccessible.", None
@@ -249,15 +286,21 @@ class FTP:
         msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
-    def list_cmd(self, sock, path=None):
+    def list_cmd(self, sock, transfer_type, path=None):
         print_debug("Executing LIST")
         if path:
             command = "LIST %s\r\n" % path
         else:
             command = "LIST\r\n"
         msg_rec = self.send_and_log(self.s, command)
-        print(self.get_from_data_channel(sock).decode('string_escape')[1:-1])
-        self.close_socket(sock)
+        if transfer_type == "1":
+            conn, sockaddr = sock.accept()
+            data_rec = self.get_from_data_channel(conn).decode('string_escape')[1:-1]
+            self.close_socket(conn)
+        else:
+            data_rec = self.get_from_data_channel(sock).decode('string_escape')[1:-1]
+            self.close_socket(sock)
+        print(data_rec)
         return msg_rec
 
     def close_socket(self, sock):
@@ -289,7 +332,8 @@ def usage():
 
 def error_quit(msg, code):
     """Prints out an error message, the program usage, and terminates with an
-    error code of `code`."""
+       error code of `code`.
+    """
     print("[!] %s" % msg)
     usage()
     exit(code)
@@ -384,28 +428,24 @@ def download_menu():
 def do_download(ftp):
     # Active (PORT) or Passive (PASV)?
     transfer_type = transfer_menu()
-    output, sock = ftp.pasv_cmd() if transfer_type == "2" else ftp.port_cmd()
+    output, sock = ftp.port_cmd() if transfer_type == "1" else ftp.pasv_cmd()
     print("%s\n" % output)
-
-    # ASCII or Binary file?
-    file_type = download_menu()
-    is_binary = True if file_type == "2" else False
 
     # What file to download?
     path = raw_input("What file do you want to download?\n> ")
     while not path:
         path = raw_input("What file do you want to download?\n> ")
-    msg_rec, data_rec = ftp.retr_cmd(sock, path, is_binary)
+    msg_rec, data_rec = ftp.retr_cmd(sock, path, transfer_type)
     print("%s\n" % msg_rec)
 
     # Download file.
     if data_rec:
         print("%s\n" % data_rec)
-        write_to_local(path, data_rec, is_binary)
+        write_to_local(path, data_rec)
     main_menu(ftp)
 
 
-def write_to_local(path, data_rec, is_binary=False):
+def write_to_local(path, data_rec):
     path, filename = os.path.split(path)
     with open(filename, 'wb') as f:
         f.write(data_rec)
@@ -439,9 +479,9 @@ def do_list(ftp):
 
     path = raw_input("What directory or file do you want to list (blank=current)?\n> ")
     if path:
-        output = ftp.list_cmd(sock, path)
+        output = ftp.list_cmd(sock, transfer_type, path)
     else:
-        output = ftp.list_cmd(sock)
+        output = ftp.list_cmd(sock, transfer_type)
     print("%s\n" % output)
     main_menu(ftp)
 
