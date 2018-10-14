@@ -20,6 +20,7 @@ BUFF_SIZE = 1024
 # FTP Server Response Codes directly referenced in this program.
 FTP_STATUS_CODES = {
     "SUCCESSFUL_RETR":   "150",
+    "SUCCESSFUL_STOR":   "150",
     "SUCCESSFUL_LOGIN":  "230",
     "SUCCESSFUL_LOGOUT": "231"
 }
@@ -145,6 +146,14 @@ class FTP:
         self.logger.log("Received: %s" % msg_rec)
         return msg_rec
 
+    def send_to_data_channel(self, sock, data):
+        """Sends data to server via data channel."""
+        data += "\\r\\n"
+        resp = sock.send(data)
+        print_debug(resp)
+        self.logger.log("Sent: %s" % data)
+        return resp
+
     def pasv_connection(self, sock, pasv_ip, pasv_port):
         """Connect pasv socket to data channel port for data to be read."""
         self.ftp_connect(sock, pasv_ip, pasv_port)
@@ -258,12 +267,25 @@ class FTP:
         else:
             return "File not found or inaccessible.", None
 
-    def stor_cmd(self, sock):
+    def stor_cmd(self, sock, local_file, remote_path, transfer_type):
         print_debug("Executing STOR")
-        command = "STOR %s\r\n" % dir
+        command = "STOR %s\r\n" % remote_path
         msg_rec = self.send_and_log(self.s, command)
-        print(self.get_from_data_channel(sock).decode('string_escape')[1:-1])
-        return msg_rec
+        print_debug(msg_rec)
+        if get_ftp_server_code(msg_rec) == FTP_STATUS_CODES["SUCCESSFUL_STOR"]:
+            with open(local_file, "r") as f:
+                data = f.read()
+            if transfer_type == "1":
+                conn, sockaddr = sock.accept()
+                data_rec = self.send_to_data_channel(conn, data)
+                self.close_socket(conn)
+            else:
+                data_rec = self.send_to_data_channel(sock, data)
+                self.close_socket(sock)
+            print(data_rec)
+            return msg_rec, data_rec
+        else:
+            return "File not found or inaccessible.", None
 
     def pwd_cmd(self):
         print_debug("Executing PWD")
@@ -458,16 +480,15 @@ def do_upload(ftp):
     print("%s\n" % output)
 
     # What file to upload?
-    path = raw_input("What file do you want to upload?\n> ")
-    while not path:
-        path = raw_input("What file do you want to upload?\n> ")
-    msg_rec, data_rec = ftp.stor_cmd(sock, path)
+    local_file = raw_input("What local file do you want to upload?\n> ")
+    while not local_file:
+        local_file = raw_input("What local file do you want to upload?\n> ")
+    # What to save file as?
+    remote_path = raw_input("What do you want to name the remote file?\n> ")
+    while not remote_path:
+        remote_path = raw_input("What do you want to name the remote file?\n> ")
+    msg_rec, data_rec = ftp.stor_cmd(sock, local_file, remote_path, transfer_type)
     print("%s\n" % msg_rec)
-
-    # Upload file.
-    if data_rec:
-        print("%s\n" % data_rec)
-        # todo actually upload
     main_menu(ftp)
 
 
