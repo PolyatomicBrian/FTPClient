@@ -22,7 +22,8 @@ FTP_STATUS_CODES = {
     "SUCCESSFUL_RETR":   "150",
     "SUCCESSFUL_STOR":   "150",
     "SUCCESSFUL_LOGIN":  "230",
-    "SUCCESSFUL_LOGOUT": "231"
+    "SUCCESSFUL_LOGOUT": "231",
+    "SUCCESSFUL_CWD":    "250"
 }
 
 # Actions User can make when at the Main Menu.
@@ -373,8 +374,8 @@ class FTP:
         else:
             data_rec = self.get_from_data_channel(sock).decode('string_escape')[1:-1]
             self.close_socket(sock)
-        print(data_rec)
-        return msg_rec
+        print_debug(data_rec)
+        return data_rec
 
     def close_socket(self, sock):
         print_debug("Closing socket.")
@@ -500,28 +501,28 @@ def download_menu():
 
 def do_download(ftp):
     # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
-    transfer_type = transfer_menu()
-    if transfer_type == "1":
-        output, sock = ftp.port_cmd()
-    elif transfer_type == "2":
-        output, sock = ftp.pasv_cmd()
-    elif transfer_type == "3":
-        output, sock = ftp.eprt_cmd("1")
-    elif transfer_type == "4":
-        output, sock = ftp.epsv_cmd("1")
+    output, sock, transfer_type = get_transfer_output_and_socket(ftp)
     print_debug(output + "\n")
 
     # What file to download?
     path = raw_input("What file do you want to download?\n> ")
     while not path:
         path = raw_input("What file do you want to download?\n> ")
-    msg_rec, data_rec = ftp.retr_cmd(sock, path, transfer_type)
-    print("%s\n" % msg_rec)
+    try:
+        msg_rec, data_rec = ftp.retr_cmd(sock, path, transfer_type)
+        print("%s\n" % msg_rec)
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
 
     # Download file.
     if data_rec:
-        print("%s\n" % data_rec)
-        write_to_local(path, data_rec)
+        print("%s" % data_rec)
+        try:
+            write_to_local(path, data_rec)
+        except Exception as e:
+            print("An error has occurred: " + e + "\nPlease try again.")
+            return main_menu(ftp)
     main_menu(ftp)
 
 
@@ -531,17 +532,26 @@ def write_to_local(path, data_rec):
         f.write(data_rec)
 
 
+def get_transfer_output_and_socket(ftp):
+    try:
+        transfer_type = transfer_menu()
+        if transfer_type == "1":
+            output, sock = ftp.port_cmd()
+        elif transfer_type == "2":
+            output, sock = ftp.pasv_cmd()
+        elif transfer_type == "3":
+            output, sock = ftp.eprt_cmd("1") # Only worry about IPv4
+        elif transfer_type == "4":
+            output, sock = ftp.epsv_cmd("1") # Only worry about IPv4
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
+    return output, sock, transfer_type
+
+
 def do_upload(ftp):
     # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
-    transfer_type = transfer_menu()
-    if transfer_type == "1":
-        output, sock = ftp.port_cmd()
-    elif transfer_type == "2":
-        output, sock = ftp.pasv_cmd()
-    elif transfer_type == "3":
-        output, sock = ftp.eprt_cmd("1")
-    elif transfer_type == "4":
-        output, sock = ftp.epsv_cmd("1")
+    output, sock, transfer_type = get_transfer_output_and_socket(ftp)
     print_debug(output + "\n")
 
     # What file to upload?
@@ -552,64 +562,94 @@ def do_upload(ftp):
     remote_path = raw_input("What do you want to name the remote file?\n> ")
     while not remote_path:
         remote_path = raw_input("What do you want to name the remote file?\n> ")
-    msg_rec, data_rec = ftp.stor_cmd(sock, local_file, remote_path, transfer_type)
-    print("%s\n" % msg_rec)
+    try:
+        msg_rec, data_rec = ftp.stor_cmd(sock, local_file, remote_path, transfer_type)
+        print("%s\n" % data_rec)
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
     main_menu(ftp)
 
 
 def do_list(ftp):
     # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
-    transfer_type = transfer_menu()
-    if transfer_type == "1":
-        output, sock = ftp.port_cmd()
-    elif transfer_type == "2":
-        output, sock = ftp.pasv_cmd()
-    elif transfer_type == "3":
-        output, sock = ftp.eprt_cmd("1")
-    elif transfer_type == "4":
-        output, sock = ftp.epsv_cmd("1")
+    output, sock, transfer_type = get_transfer_output_and_socket(ftp)
     print_debug(output + "\n")
 
     path = raw_input("What directory or file do you want to list (blank=current)?\n> ")
-    if path:
-        output = ftp.list_cmd(sock, transfer_type, path)
-    else:
-        output = ftp.list_cmd(sock, transfer_type)
-    print("%s\n" % output)
+    try:
+        if path:
+            output = ftp.list_cmd(sock, transfer_type, path)
+        else:
+            output = ftp.list_cmd(sock, transfer_type)
+        print("%s" % output)
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
     main_menu(ftp)
 
 
 def do_cwd(ftp):
     new_dir = raw_input("What directory do you want to change to?\n> ")
-    output = ftp.cwd_cmd(new_dir)
-    print("%s\n" % output)
+    try:
+        output = ftp.cwd_cmd(new_dir)
+        if get_ftp_server_code(output) == FTP_STATUS_CODES["SUCCESSFUL_CWD"]:
+            print("Successfully changed directory\n")
+        else:
+            print("Invalid directory or insufficient permissions.\n")
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
     main_menu(ftp)
 
 
 def do_pwd(ftp):
-    output = ftp.pwd_cmd()
-    print("%s\n" % output)
+    try:
+        output = ftp.pwd_cmd()
+        output = parse_server_response(output)
+        print("%s\n" % output)
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
     main_menu(ftp)
 
 
 def do_syst(ftp):
-    output = ftp.syst_cmd()
-    print("%s\n" % output)
+    try:
+        output = ftp.syst_cmd()
+        output = parse_server_response(output)
+        print("%s\n" % output)
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
     main_menu(ftp)
 
 
 def do_help(ftp):
-    cmd = raw_input("What command do you need help with (blank=general)?\n> ")
-    if cmd:
-        output = ftp.help_cmd(cmd)
-    else:
-        output = ftp.help_cmd()
-    print("%s\n" % output)
+    try:
+        cmd = raw_input("What command do you need help with (blank=general)?\n> ")
+        if cmd:
+            output = ftp.help_cmd(cmd)
+        else:
+            output = ftp.help_cmd()
+        output = parse_server_response(output)
+        print("%s\n" % output)
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
     main_menu(ftp)
 
 
 def do_quit(ftp):
-    ftp.quit_cmd()
+    try:
+        ftp.quit_cmd()
+    except Exception as e:
+        print("An error has occurred: " + e + "\nPlease try again.")
+        return main_menu(ftp)
+
+
+def parse_server_response(msg):
+    return msg[5:-5]
 
 
 def handle_main_menu_choice(choice, ftp):
