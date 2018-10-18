@@ -199,7 +199,7 @@ class FTP:
             p2 = str(host_port % 256)
             port_params += p1 + "," + p2
         except:
-            return "", ""
+            return "", "", ""
         return port_params, host_ip, host_port
 
     def parse_epsv_resp(self, msg_rec):
@@ -213,6 +213,22 @@ class FTP:
         except Exception:
             return ""
         return host_port
+
+    def parse_eprt_req(self, sock, proto):
+        """Helper for eprt_cmd() to parse in IP and Port of data channel."""
+        try:
+            net_prt = proto
+            net_addr = self.s.getsockname()[0]  # Get local addr of client.
+            tcp_port = sock.getsockname()[1]  # Get opened port of socket.
+            # EPRT requires parameters split up as:
+            # <d><net-prt><d><net-addr><d><tcp-port><d>
+            eprt_params = E_DELIMITER + str(net_prt) + E_DELIMITER + \
+                          str(net_addr) + E_DELIMITER + str(tcp_port) + \
+                          E_DELIMITER
+            print_debug(eprt_params)
+        except:
+            return "", "", ""
+        return eprt_params, net_addr, tcp_port
 
     def user_cmd(self, username):
         print_debug("Executing USER")
@@ -272,16 +288,17 @@ class FTP:
         self.pasv_connection(sock, epsv_ip, epsv_port)
         return msg_rec, sock
 
-
-    def eprt_cmd(self):
+    def eprt_cmd(self, proto="1"):
         print_debug("Executing EPRT")
-        net_prt  = ""
-        net_addr = ""
-        tcp_port = ""
-        command = "EPRT %s%s%s%s%s%s%s\r\n" % (E_DELIMITER, net_prt,
-                                               E_DELIMITER, net_addr,
-                                               E_DELIMITER, tcp_port,
-                                               E_DELIMITER)
+        sock = new_socket()
+        self.port_connection(sock)
+        net_prt = proto
+        eprt_params, net_addr, tcp_port = self.parse_eprt_req(sock, net_prt)
+        print_debug("PARAMS: " + eprt_params)
+        command = "EPRT %s\r\n" % eprt_params
+        msg_rec = self.send_and_log(self.s, command)
+        print_debug(msg_rec)
+        return msg_rec, sock
 
     def retr_cmd(self, sock, path, transfer_type):
         print_debug("Executing RETR")
@@ -489,7 +506,7 @@ def do_download(ftp):
     elif transfer_type == "2":
         output, sock = ftp.pasv_cmd()
     elif transfer_type == "3":
-        output, sock = ftp.eprt_cmd()
+        output, sock = ftp.eprt_cmd("1")
     elif transfer_type == "4":
         output, sock = ftp.epsv_cmd("1")
     print_debug(output + "\n")
@@ -522,7 +539,7 @@ def do_upload(ftp):
     elif transfer_type == "2":
         output, sock = ftp.pasv_cmd()
     elif transfer_type == "3":
-        output, sock = ftp.eprt_cmd()
+        output, sock = ftp.eprt_cmd("1")
     elif transfer_type == "4":
         output, sock = ftp.epsv_cmd("1")
     print_debug(output + "\n")
@@ -548,7 +565,7 @@ def do_list(ftp):
     elif transfer_type == "2":
         output, sock = ftp.pasv_cmd()
     elif transfer_type == "3":
-        output, sock = ftp.eprt_cmd()
+        output, sock = ftp.eprt_cmd("1")
     elif transfer_type == "4":
         output, sock = ftp.epsv_cmd("1")
     print_debug(output + "\n")
