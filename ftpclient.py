@@ -46,8 +46,12 @@ DOWNLOAD_MENU_SELECTIONS = {
 
 TRANSFER_MENU_SELECTIONS = {
     "1": "Active  (PORT)",
-    "2": "Passive (PASV)"
+    "2": "Passive (PASV)",
+    "3": "Extended Active  (EPRT)",
+    "4": "Extended Passive (EPSV)"
 }
+
+E_DELIMITER = "|"  # Delimiter used for EPRT and EPSV
 
 # Program Arguments
 REQUIRED_NUM_ARGS = 3
@@ -118,6 +122,7 @@ class FTP:
         except Exception:
             error_quit("Invalid or unknown host address!", 400)
         try:
+            port = int(port)
             sock.connect((ip, port))
         except socket.error:
             error_quit("Connection refused, did you specify the correct host and port?", 400)
@@ -197,6 +202,18 @@ class FTP:
             return "", ""
         return port_params, host_ip, host_port
 
+    def parse_epsv_resp(self, msg_rec):
+        """Helper for epsv_cmd() to parse Port of data channel."""
+        port_start_ind = 3
+        try:
+            host_port_delim = msg_rec[msg_rec.index("(") + 1:msg_rec.rindex(")")]
+            host_port_delim_split = host_port_delim.split(E_DELIMITER)
+            host_port = host_port_delim_split[port_start_ind]
+            print_debug("Parsed Port: %s" % host_port)
+        except Exception:
+            return ""
+        return host_port
+
     def user_cmd(self, username):
         print_debug("Executing USER")
         command = "USER %s\r\n" % username
@@ -232,9 +249,6 @@ class FTP:
         self.pasv_connection(sock, pasv_ip, pasv_port)
         return msg_rec, sock
 
-    def epsv_cmd(self):
-        print_debug("Executing EPSV")
-
     def port_cmd(self):
         print_debug("Executing PORT")
         sock = new_socket()
@@ -246,8 +260,28 @@ class FTP:
         print_debug(msg_rec)
         return msg_rec, sock
 
+    def epsv_cmd(self, proto="1"):
+        print_debug("Executing EPSV")
+        net_prt = proto
+        command = "EPSV %s\r\n" % net_prt
+        msg_rec = self.send_and_log(self.s, command)
+        print_debug(msg_rec)
+        sock = new_socket()
+        epsv_port = self.parse_epsv_resp(msg_rec)
+        epsv_ip = self.s.getpeername()[0]
+        self.pasv_connection(sock, epsv_ip, epsv_port)
+        return msg_rec, sock
+
+
     def eprt_cmd(self):
         print_debug("Executing EPRT")
+        net_prt  = ""
+        net_addr = ""
+        tcp_port = ""
+        command = "EPRT %s%s%s%s%s%s%s\r\n" % (E_DELIMITER, net_prt,
+                                               E_DELIMITER, net_addr,
+                                               E_DELIMITER, tcp_port,
+                                               E_DELIMITER)
 
     def retr_cmd(self, sock, path, transfer_type):
         print_debug("Executing RETR")
@@ -255,7 +289,7 @@ class FTP:
         msg_rec = self.send_and_log(self.s, command)
         print_debug(msg_rec)
         if get_ftp_server_code(msg_rec) == FTP_STATUS_CODES["SUCCESSFUL_RETR"]:
-            if transfer_type == "1":
+            if transfer_type == "1" or transfer_type == "3":
                 conn, sockaddr = sock.accept()
                 data_rec = self.get_from_data_channel(conn).decode('string_escape')[1:-1]
                 self.close_socket(conn)
@@ -275,7 +309,7 @@ class FTP:
         if get_ftp_server_code(msg_rec) == FTP_STATUS_CODES["SUCCESSFUL_STOR"]:
             with open(local_file, "r") as f:
                 data = f.read()
-            if transfer_type == "1":
+            if transfer_type == "1" or transfer_type == "3":
                 conn, sockaddr = sock.accept()
                 data_rec = self.send_to_data_channel(conn, data)
                 self.close_socket(conn)
@@ -315,7 +349,7 @@ class FTP:
         else:
             command = "LIST\r\n"
         msg_rec = self.send_and_log(self.s, command)
-        if transfer_type == "1":
+        if transfer_type == "1" or transfer_type == "3":
             conn, sockaddr = sock.accept()
             data_rec = self.get_from_data_channel(conn).decode('string_escape')[1:-1]
             self.close_socket(conn)
@@ -448,10 +482,17 @@ def download_menu():
 
 
 def do_download(ftp):
-    # Active (PORT) or Passive (PASV)?
+    # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
     transfer_type = transfer_menu()
-    output, sock = ftp.port_cmd() if transfer_type == "1" else ftp.pasv_cmd()
-    print("%s\n" % output)
+    if transfer_type == "1":
+        output, sock = ftp.port_cmd()
+    elif transfer_type == "2":
+        output, sock = ftp.pasv_cmd()
+    elif transfer_type == "3":
+        output, sock = ftp.eprt_cmd()
+    elif transfer_type == "4":
+        output, sock = ftp.epsv_cmd("1")
+    print_debug(output + "\n")
 
     # What file to download?
     path = raw_input("What file do you want to download?\n> ")
@@ -474,10 +515,17 @@ def write_to_local(path, data_rec):
 
 
 def do_upload(ftp):
-    # Active (PORT) or Passive (PASV)?
+    # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
     transfer_type = transfer_menu()
-    output, sock = ftp.port_cmd() if transfer_type == "1" else ftp.pasv_cmd()
-    print("%s\n" % output)
+    if transfer_type == "1":
+        output, sock = ftp.port_cmd()
+    elif transfer_type == "2":
+        output, sock = ftp.pasv_cmd()
+    elif transfer_type == "3":
+        output, sock = ftp.eprt_cmd()
+    elif transfer_type == "4":
+        output, sock = ftp.epsv_cmd("1")
+    print_debug(output + "\n")
 
     # What file to upload?
     local_file = raw_input("What local file do you want to upload?\n> ")
@@ -493,10 +541,17 @@ def do_upload(ftp):
 
 
 def do_list(ftp):
-    # Active (PORT) or Passive (PASV)?
+    # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
     transfer_type = transfer_menu()
-    output, sock = ftp.port_cmd() if transfer_type == "1" else ftp.pasv_cmd()
-    print("%s\n" % output)
+    if transfer_type == "1":
+        output, sock = ftp.port_cmd()
+    elif transfer_type == "2":
+        output, sock = ftp.pasv_cmd()
+    elif transfer_type == "3":
+        output, sock = ftp.eprt_cmd()
+    elif transfer_type == "4":
+        output, sock = ftp.epsv_cmd("1")
+    print_debug(output + "\n")
 
     path = raw_input("What directory or file do you want to list (blank=current)?\n> ")
     if path:
