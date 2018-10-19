@@ -12,7 +12,7 @@ import os        # Used for parsing paths / file names.
 
 ''' GLOBALS '''
 
-IS_DEBUG = True
+IS_DEBUG = False
 DEFAULT_FTP_PORT = 21
 
 BUFF_SIZE = 1024
