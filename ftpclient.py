@@ -40,11 +40,6 @@ MAIN_MENU_SELECTIONS = {
     "8": ["Quit.", "do_quit"]
 }
 
-DOWNLOAD_MENU_SELECTIONS = {
-    "1": "ASCII",
-    "2": "BINARY"
-}
-
 TRANSFER_MENU_SELECTIONS = {
     "1": "Active  (PORT)",
     "2": "Passive (PASV)",
@@ -117,6 +112,7 @@ class FTP:
     def ftp_connect(self, sock, host, port):
         """Connects Client to Server."""
         try:
+            print_debug("ftp_connect " + str(port))
             ip = socket.gethostbyname(host)
         except socket.error:
             error_quit("Invalid or unknown host address!", 400)
@@ -146,9 +142,12 @@ class FTP:
 
     def get_from_data_channel(self, sock):
         """Return server's response from data channel."""
-        msg_rec = ""
-        while not msg_rec.endswith("\\r\\n'"):
-            msg_rec += repr(sock.recv(BUFF_SIZE))
+        msg_rec = b""
+        while 1:
+            buff = sock.recv(BUFF_SIZE)
+            msg_rec += buff
+            if len(buff) == 0:
+                break
         self.logger.log("Received: %s" % msg_rec)
         return msg_rec
 
@@ -309,12 +308,13 @@ class FTP:
         if get_ftp_server_code(msg_rec) == FTP_STATUS_CODES["SUCCESSFUL_RETR"]:
             if transfer_type == "1" or transfer_type == "3":
                 conn, sockaddr = sock.accept()
-                data_rec = self.get_from_data_channel(conn).decode('string_escape')[1:-1]
+                data_rec = self.get_from_data_channel(conn)
                 self.close_socket(conn)
             else:
-                data_rec = self.get_from_data_channel(sock).decode('string_escape')[1:-1]
+                data_rec = self.get_from_data_channel(sock)
                 self.close_socket(sock)
             print(data_rec)
+            msg_cmd_rec = self.s.recv(BUFF_SIZE)
             return msg_rec, data_rec
         else:
             return "File not found or inaccessible.", None
@@ -355,9 +355,11 @@ class FTP:
         print_debug("Executing HELP")
         if cmd:
             command = "HELP %s\r\n" % cmd
+            msg_rec = self.send_and_log(self.s, command)
         else:
             command = "HELP\r\n"
-        msg_rec = self.send_and_log(self.s, command)
+            msg_rec = self.send_and_log(self.s, command).decode('string_escape')[1:-1]
+            msg_rec += repr(self.s.recv(BUFF_SIZE)).decode('string_escape')[1:-1]
         return msg_rec
 
     def list_cmd(self, sock, transfer_type, path=None):
@@ -374,6 +376,7 @@ class FTP:
         else:
             data_rec = self.get_from_data_channel(sock).decode('string_escape')[1:-1]
             self.close_socket(sock)
+        msg_cmd_rec = self.s.recv(BUFF_SIZE)
         print_debug(data_rec)
         return data_rec
 
@@ -383,7 +386,7 @@ class FTP:
             sock.close()
             # If data socket being closed, print status message.
             if sock != self.s:
-                print_debug(repr(self.s.recv(BUFF_SIZE)))
+                print_debug("Socket closed.")
         except socket.error:
             error_quit("Error closing socket!", 500)
         except Exception:
@@ -488,17 +491,6 @@ def transfer_menu():
     return choice
 
 
-def download_menu():
-    """Displays Download Menu and prompts user to select an action."""
-    print("What type of file are you downloading?")
-    for key in sorted(DOWNLOAD_MENU_SELECTIONS):
-        print("[%s] %s" % (key, DOWNLOAD_MENU_SELECTIONS[key]))
-    choice = raw_input("> ")
-    while choice not in list(DOWNLOAD_MENU_SELECTIONS.keys()):
-        choice = raw_input("> ")
-    return choice
-
-
 def do_download(ftp):
     # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
     output, sock, transfer_type = get_transfer_output_and_socket(ftp)
@@ -512,7 +504,7 @@ def do_download(ftp):
         msg_rec, data_rec = ftp.retr_cmd(sock, path, transfer_type)
         print("%s\n" % msg_rec)
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
 
     # Download file.
@@ -521,7 +513,7 @@ def do_download(ftp):
         try:
             write_to_local(path, data_rec)
         except Exception as e:
-            print("An error has occurred: " + e + "\nPlease try again.")
+            print("An error has occurred: " + str(e) + "\nPlease try again.")
             return main_menu(ftp)
     main_menu(ftp)
 
@@ -544,7 +536,7 @@ def get_transfer_output_and_socket(ftp):
         elif transfer_type == "4":
             output, sock = ftp.epsv_cmd("1") # Only worry about IPv4
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
     return output, sock, transfer_type
 
@@ -566,7 +558,7 @@ def do_upload(ftp):
         msg_rec, data_rec = ftp.stor_cmd(sock, local_file, remote_path, transfer_type)
         print("%s\n" % data_rec)
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
     main_menu(ftp)
 
@@ -584,7 +576,7 @@ def do_list(ftp):
             output = ftp.list_cmd(sock, transfer_type)
         print("%s" % output)
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
     main_menu(ftp)
 
@@ -598,7 +590,7 @@ def do_cwd(ftp):
         else:
             print("Invalid directory or insufficient permissions.\n")
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
     main_menu(ftp)
 
@@ -609,7 +601,7 @@ def do_pwd(ftp):
         output = parse_server_response(output)
         print("%s\n" % output)
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
     main_menu(ftp)
 
@@ -620,7 +612,7 @@ def do_syst(ftp):
         output = parse_server_response(output)
         print("%s\n" % output)
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
     main_menu(ftp)
 
@@ -635,7 +627,7 @@ def do_help(ftp):
         output = parse_server_response(output)
         print("%s\n" % output)
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
     main_menu(ftp)
 
@@ -644,7 +636,7 @@ def do_quit(ftp):
     try:
         ftp.quit_cmd()
     except Exception as e:
-        print("An error has occurred: " + e + "\nPlease try again.")
+        print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
 
 
