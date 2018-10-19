@@ -40,6 +40,7 @@ MAIN_MENU_SELECTIONS = {
     "8": ["Quit.", "do_quit"]
 }
 
+# Transfer Types from which the user will be prompted to select from.
 TRANSFER_MENU_SELECTIONS = {
     "1": "Active  (PORT)",
     "2": "Passive (PASV)",
@@ -95,30 +96,34 @@ class FTP:
     #   * s      - socket
     def __init__(self, host, logger, port):
         """Create socket and invoke connection."""
-        # TODO break this function into two others.
+        # Initialize logger.
         self.logger = logger
         self.logger.log("Connecting to %s" % host)
         try:
+            # Create socket, connect to host and port.
             self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.ftp_connect(self.s, host, port)
+            # Get response from initial connection.
             msg_rec = repr(self.s.recv(BUFF_SIZE))
         except socket.error as e:
             error_quit("Unable to connect due to: %s" % e, 500)
         self.logger.log("Received: %s" % msg_rec)
         print_debug(msg_rec)
+        # Did not receive an acknowledgement to the connection, so terminate.
         if not msg_rec:
             self.close_socket(self.s)
 
     def ftp_connect(self, sock, host, port):
         """Connects Client to Server."""
         try:
-            print_debug("ftp_connect " + str(port))
+            # Get IP address.
             ip = socket.gethostbyname(host)
         except socket.error:
             error_quit("Invalid or unknown host address!", 400)
         except Exception:
             error_quit("Invalid or unknown host address!", 400)
         try:
+            # Connect socket to IP and Port.
             port = int(port)
             sock.connect((ip, port))
         except socket.error:
@@ -130,8 +135,10 @@ class FTP:
         """Send command to socket, return server's
            response from command channel."""
         try:
+            # Send command to server.
             sock.send(command)
             self.logger.log("Sent: %r" % command)
+            # Receive response from server.
             msg_rec = repr(sock.recv(BUFF_SIZE))
             self.logger.log("Received: %s" % msg_rec)
         except socket.error:
@@ -143,6 +150,7 @@ class FTP:
     def get_from_data_channel(self, sock):
         """Return server's response from data channel."""
         msg_rec = b""
+        # Continue reading from server until there's nothing left to read.
         while 1:
             buff = sock.recv(BUFF_SIZE)
             msg_rec += buff
@@ -153,7 +161,6 @@ class FTP:
 
     def send_to_data_channel(self, sock, data):
         """Sends data to server via data channel."""
-        data += "\\r\\n"
         resp = sock.send(data)
         print_debug(resp)
         self.logger.log("Sent: %s" % data)
@@ -174,10 +181,14 @@ class FTP:
         index_of_port_1 = 4
         index_of_port_2 = 5
         try:
+            # Parse out IP & Port from the parenthesis within the PASV resp.
             host_info = msg_rec[msg_rec.index("(") + 1:msg_rec.rindex(")")]
+            # Break up IP & Port based on comma separated delimiter.
             host_info_split = host_info.split(',')
+            # Put octets together, delimited by periods.
             host_ip_list = [host_info_split[i] for i in range(num_ip_bytes)]
             host_ip = '.'.join(host_ip_list)
+            # Get Port as a valid port number.
             host_port = int(host_info_split[index_of_port_1]) * 256 + \
                         int(host_info_split[index_of_port_2])
         except Exception:
@@ -195,6 +206,7 @@ class FTP:
             port_params = ""
             for octet in list_csv_ip:
                 port_params += octet + ","
+            # Parse port into PORT command's expected parameter.
             p1 = str((host_port - (host_port % 256)) / 256)
             p2 = str(host_port % 256)
             port_params += p1 + "," + p2
@@ -206,8 +218,11 @@ class FTP:
         """Helper for epsv_cmd() to parse Port of data channel."""
         port_start_ind = 3
         try:
+            # Get host port with delimiter from server's response.
             host_port_delim = msg_rec[msg_rec.index("(") + 1:msg_rec.rindex(")")]
+            # Split based on delimiter.
             host_port_delim_split = host_port_delim.split(E_DELIMITER)
+            # Get port from split list.
             host_port = host_port_delim_split[port_start_ind]
             print_debug("Parsed Port: %s" % host_port)
         except Exception:
@@ -231,44 +246,53 @@ class FTP:
         return eprt_params, net_addr, tcp_port
 
     def user_cmd(self, username):
+        """Send USER command to server."""
         print_debug("Executing USER")
         command = "USER %s\r\n" % username
         msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def pass_cmd(self, password):
+        """Send PASS command to server."""
         print_debug("Executing PASS")
         command = "PASS %s\r\n" % password
         msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def cwd_cmd(self, new_dir):
+        """Send CWD command to server."""
         print_debug("Executing CWD")
         command = "CWD %s\r\n" % new_dir
         msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def quit_cmd(self):
+        """Send QUIT command to server."""
         print_debug("Executing QUIT")
         command = "QUIT\r\n"
         msg_rec = self.send_and_log(self.s, command)
-        self.close_socket(self.s)
+        self.close_socket(self.s) # Close socket since we're done.
         return msg_rec
 
     def pasv_cmd(self):
+        """Send PASV command to server."""
         print_debug("Executing PASV")
         command = "PASV\r\n"
         msg_rec = self.send_and_log(self.s, command)
         print_debug(msg_rec)
+        # PASV creates a new connection from client to server.
         sock = new_socket()
         pasv_ip, pasv_port = self.parse_pasv_resp(msg_rec)
         self.pasv_connection(sock, pasv_ip, pasv_port)
         return msg_rec, sock
 
     def port_cmd(self):
+        """Send PORT command to server."""
         print_debug("Executing PORT")
+        # PORT creates a new connection from server to client.
         sock = new_socket()
         self.port_connection(sock)
+        # Get required parameters for PORT command.
         port_params, host_ip, host_port = self.parse_port_req(sock)
         print_debug("PARAMS: " + port_params)
         command = "PORT %s\r\n" % port_params
@@ -277,22 +301,30 @@ class FTP:
         return msg_rec, sock
 
     def epsv_cmd(self, proto="1"):
+        """Send EPSV command to server."""
         print_debug("Executing EPSV")
         net_prt = proto
         command = "EPSV %s\r\n" % net_prt
         msg_rec = self.send_and_log(self.s, command)
         print_debug(msg_rec)
+        # EPSV creates a new connection from client to server.
         sock = new_socket()
+        # Get client port from Command Channel socket.
         epsv_port = self.parse_epsv_resp(msg_rec)
+        # Get client ip from Command Channel socket.
         epsv_ip = self.s.getpeername()[0]
+        # Create passive connection using acquired ip and port.
         self.pasv_connection(sock, epsv_ip, epsv_port)
         return msg_rec, sock
 
     def eprt_cmd(self, proto="1"):
+        """Send EPRT command to server."""
         print_debug("Executing EPRT")
         sock = new_socket()
+        # Create port connection using extended info.
         self.port_connection(sock)
         net_prt = proto
+        # Get required parameters for EPRT command.
         eprt_params, net_addr, tcp_port = self.parse_eprt_req(sock, net_prt)
         print_debug("PARAMS: " + eprt_params)
         command = "EPRT %s\r\n" % eprt_params
@@ -301,86 +333,123 @@ class FTP:
         return msg_rec, sock
 
     def retr_cmd(self, sock, path, transfer_type):
+        """Send RETR command to server."""
         print_debug("Executing RETR")
         command = "RETR %s\r\n" % path
         msg_rec = self.send_and_log(self.s, command)
         print_debug(msg_rec)
+        # Ensure we got a success message from the FTP server.
         if get_ftp_server_code(msg_rec) == FTP_STATUS_CODES["SUCCESSFUL_RETR"]:
+            # Are we doing PORT or EPRT?
             if transfer_type == "1" or transfer_type == "3":
+                # Have client accept data from server.
                 conn, sockaddr = sock.accept()
+                # Have client get data from server.
                 data_rec = self.get_from_data_channel(conn)
                 self.close_socket(conn)
+            # Are we doing PASV or EPSV?
             else:
+                # Have client get data from server.
                 data_rec = self.get_from_data_channel(sock)
                 self.close_socket(sock)
             print(data_rec)
+            # Get Transfer success / failed message.
             msg_cmd_rec = self.s.recv(BUFF_SIZE)
             return msg_rec, data_rec
         else:
             return "File not found or inaccessible.", None
 
     def stor_cmd(self, sock, local_file, remote_path, transfer_type):
+        """Send STOR command to server."""
         print_debug("Executing STOR")
         command = "STOR %s\r\n" % remote_path
         msg_rec = self.send_and_log(self.s, command)
         print_debug(msg_rec)
+        # Ensure we got a success message from the FTP server.
         if get_ftp_server_code(msg_rec) == FTP_STATUS_CODES["SUCCESSFUL_STOR"]:
-            with open(local_file, "r") as f:
+            # Open file to upload and read it into variable "data"
+            with open(local_file, "rb") as f:
                 data = f.read()
+            # Are we doing PORT or EPRT?
             if transfer_type == "1" or transfer_type == "3":
+                # Have client accept data from server.
                 conn, sockaddr = sock.accept()
+                # Have client get data from server.
                 data_rec = self.send_to_data_channel(conn, data)
                 self.close_socket(conn)
+            # Are we doing PASV or EPSV?
             else:
+                # Have client get data from server.
                 data_rec = self.send_to_data_channel(sock, data)
                 self.close_socket(sock)
             print(data_rec)
+            # Get Transfer success / failed message.
             return msg_rec, data_rec
         else:
             return "File not found or inaccessible.", None
 
     def pwd_cmd(self):
+        """Send PWD command to server."""
         print_debug("Executing PWD")
         command = "PWD\r\n"
         msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def syst_cmd(self):
+        """Send SYST command to server."""
         print_debug("Executing SYST")
         command = "SYST\r\n"
         msg_rec = self.send_and_log(self.s, command)
         return msg_rec
 
     def help_cmd(self, cmd=None):
+        """Send HELP command to server."""
         print_debug("Executing HELP")
+        # If we're looking up the HELP of a specific command...
         if cmd:
+            # Send HELP COMMAND to the server.
             command = "HELP %s\r\n" % cmd
             msg_rec = self.send_and_log(self.s, command)
+        # If we're just calling HELP...
         else:
+            # Send HELP to the server.
             command = "HELP\r\n"
             msg_rec = self.send_and_log(self.s, command).decode('string_escape')[1:-1]
+            # This command has the server send two responses, so read in the second one.
             msg_rec += repr(self.s.recv(BUFF_SIZE)).decode('string_escape')[1:-1]
         return msg_rec
 
     def list_cmd(self, sock, transfer_type, path=None):
+        """Send LIST command to server."""
         print_debug("Executing LIST")
         if path:
+            # Send LIST command including the PATH to get info on that file
+            # or directory.
             command = "LIST %s\r\n" % path
         else:
+            # Send LIST command to list all files and directories in the
+            # current directory.
             command = "LIST\r\n"
         msg_rec = self.send_and_log(self.s, command)
+        # Are we doing PORT or EPRT?
         if transfer_type == "1" or transfer_type == "3":
+            # Have client accept data from server.
             conn, sockaddr = sock.accept()
+            # Have client get data from server.
             data_rec = self.get_from_data_channel(conn).decode('string_escape')[1:-1]
             self.close_socket(conn)
+        # Are we doing PASV or EPSV?
         else:
+            # Have client get data from server.
             data_rec = self.get_from_data_channel(sock).decode('string_escape')[1:-1]
             self.close_socket(sock)
+        # Get Transfer success / failed message.
         msg_cmd_rec = self.s.recv(BUFF_SIZE)
         print_debug(data_rec)
         return data_rec
 
     def close_socket(self, sock):
+        """Close socket passed as arg."""
         print_debug("Closing socket.")
         try:
             sock.close()
@@ -409,8 +478,7 @@ def usage():
 
 def error_quit(msg, code):
     """Prints out an error message, the program usage, and terminates with an
-       error code of `code`.
-    """
+       error code of `code`."""
     print("[!] %s" % msg)
     usage()
     exit(code)
@@ -420,8 +488,10 @@ def parse_args():
     """Gets and returns provided arguments."""
     if len(sys.argv) < REQUIRED_NUM_ARGS or len(sys.argv) > MAXIMUM_NUM_ARGS:
         error_quit("Incorrect number of arguments!", 400)
+    # Set port to DEFAULT if not specified as an arg. Otherwise, port = portarg.
     port = sys.argv[PORT_ARG_NUM] if len(sys.argv) == MAXIMUM_NUM_ARGS else DEFAULT_FTP_PORT
     port = validate_port(port)
+    # Get host address and logfile name from args.
     host, log_file = sys.argv[HOST_ARG_NUM], sys.argv[LOG_ARG_NUM]
     return host, log_file, port
 
@@ -430,6 +500,7 @@ def validate_port(port):
     """Cast port to an int and ensure it is between 0 and 65535."""
     try:
         port = int(port)
+        # Is port a valid port number?
         if port > 65535 or port < 0:
             raise ValueError('Port is not between 0 and 65535!')
     except ValueError:
@@ -476,6 +547,7 @@ def login(ftp):
 
 
 def new_socket():
+    """Return a new socket."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     return s
 
@@ -492,6 +564,7 @@ def transfer_menu():
 
 
 def do_download(ftp):
+    """Prompt for what to download, then call the appropriate FTP command."""
     # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
     output, sock, transfer_type = get_transfer_output_and_socket(ftp)
     print_debug(output + "\n")
@@ -519,12 +592,15 @@ def do_download(ftp):
 
 
 def write_to_local(path, data_rec):
+    """Writes content of data_rec to a file in path."""
     path, filename = os.path.split(path)
     with open(filename, 'wb') as f:
         f.write(data_rec)
+    f.close()
 
 
 def get_transfer_output_and_socket(ftp):
+    """Gets transfer type from user, calls appropriate FTP command."""
     try:
         transfer_type = transfer_menu()
         if transfer_type == "1":
@@ -542,6 +618,7 @@ def get_transfer_output_and_socket(ftp):
 
 
 def do_upload(ftp):
+    """Prompt for what to upload, then call the appropriate FTP command."""
     # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
     output, sock, transfer_type = get_transfer_output_and_socket(ftp)
     print_debug(output + "\n")
@@ -564,6 +641,7 @@ def do_upload(ftp):
 
 
 def do_list(ftp):
+    """Prompt for what to list, then call the appropriate FTP command."""
     # Active (PORT), Passive (PASV), ExtActive (EPRT), or ExtPassive (EPSV)?
     output, sock, transfer_type = get_transfer_output_and_socket(ftp)
     print_debug(output + "\n")
@@ -582,6 +660,7 @@ def do_list(ftp):
 
 
 def do_cwd(ftp):
+    """Prompt for what dir to change to; call the appropriate FTP command."""
     new_dir = raw_input("What directory do you want to change to?\n> ")
     try:
         output = ftp.cwd_cmd(new_dir)
@@ -596,6 +675,7 @@ def do_cwd(ftp):
 
 
 def do_pwd(ftp):
+    """Call the appropriate FTP command to display the working directory."""
     try:
         output = ftp.pwd_cmd()
         output = parse_server_response(output)
@@ -607,6 +687,7 @@ def do_pwd(ftp):
 
 
 def do_syst(ftp):
+    """Call the appropriate FTP command to display server info."""
     try:
         output = ftp.syst_cmd()
         output = parse_server_response(output)
@@ -618,6 +699,7 @@ def do_syst(ftp):
 
 
 def do_help(ftp):
+    """Call the appropriate FTP command to display the server's help info."""
     try:
         cmd = raw_input("What command do you need help with (blank=general)?\n> ")
         if cmd:
@@ -633,6 +715,7 @@ def do_help(ftp):
 
 
 def do_quit(ftp):
+    """Call the appropriate FTP command to disconnect from server."""
     try:
         ftp.quit_cmd()
     except Exception as e:
@@ -641,6 +724,7 @@ def do_quit(ftp):
 
 
 def parse_server_response(msg):
+    """Return server response without server tags and status codes."""
     return msg[5:-5]
 
 
@@ -662,6 +746,7 @@ def main_menu(ftp):
 
 
 def do_ftp(ftp):
+    """Driver that prompts for login, then displays the main menu."""
     login(ftp)
     main_menu(ftp)
 
@@ -670,6 +755,7 @@ def do_ftp(ftp):
 
 
 def print_debug(msg):
+    """Prints if we are in debug mode."""
     if IS_DEBUG:
         print(msg)
 
@@ -678,6 +764,8 @@ def print_debug(msg):
 
 
 def main():
+    """Main driver that parses args, creates our Logger & FTP objects,
+       and starts the do_ftp driver."""
     print_debug("Starting...")
     host, log_file, port = parse_args()
     logger = Logger(log_file)
