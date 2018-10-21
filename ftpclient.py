@@ -130,8 +130,8 @@ class FTP:
             sock.connect((ip, port))
         except socket.error:
             error_quit("Connection refused, did you specify the correct host and port?", 400)
-        except Exception as e:
-            error_quit("Unable to connect due to %s" % e, 400)
+        except Exception:
+            error_quit("Terminating session due to issue in transmission.", 400)
 
     def send_and_log(self, sock, command):
         """Send command to socket, return server's
@@ -360,7 +360,7 @@ class FTP:
             msg_cmd_rec = self.s.recv(BUFF_SIZE)
             print_debug("Transfer Status: " + str(msg_cmd_rec))
             if get_ftp_server_code(msg_cmd_rec) == FTP_STATUS_CODES["SUCCESSFUL_TRANSFER"]:
-                print("Download successful.")
+                print("Download successful.\n")
             else:
                 print("Something went wrong when downloading. Try again.")
             return msg_rec, data_rec
@@ -394,7 +394,7 @@ class FTP:
             msg_cmd_rec = self.s.recv(BUFF_SIZE)
             print_debug("Transfer Status: " + str(msg_cmd_rec))
             if get_ftp_server_code(msg_cmd_rec) == FTP_STATUS_CODES["SUCCESSFUL_TRANSFER"]:
-                print("Upload successful.")
+                print("Upload successful.\n")
             else:
                 print("Something went wrong when uploading. Try again.")
             return msg_rec, data_rec
@@ -416,20 +416,31 @@ class FTP:
         return msg_rec
 
     def help_cmd(self, cmd=None):
-        """Send HELP command to server."""
+        """Send HELP command to server. Note: This is broken!"""
         print_debug("Executing HELP")
         # If we're looking up the HELP of a specific command...
         if cmd:
             # Send HELP COMMAND to the server.
             command = "HELP %s\r\n" % cmd
-            msg_rec = self.send_and_log(self.s, command)
         # If we're just calling HELP...
         else:
             # Send HELP to the server.
             command = "HELP\r\n"
-            msg_rec = self.send_and_log(self.s, command).decode('string_escape')
-            # This command has the server send two responses, so read in the second one.
-            msg_rec += repr(self.s.recv(BUFF_SIZE)).decode('string_escape')[1:-1]
+        self.s.send(command)
+        self.logger.log("Sent: %r" % command)
+        msg_rec = b""
+        # Continue reading from server until there's nothing left to read.
+        self.s.settimeout(1.5)
+        while 1:
+            try:
+                buff = self.s.recv(BUFF_SIZE)
+            except socket.timeout:
+                break
+            msg_rec += buff
+            if len(buff) == 0:
+                break
+        self.s.settimeout(socket.getdefaulttimeout())
+        self.logger.log("Received: %s" % msg_rec)
         return msg_rec
 
     def list_cmd(self, sock, transfer_type, path=None):
@@ -600,7 +611,7 @@ def do_download(ftp):
 
     # Download file.
     if data_rec:
-        print("%s" % data_rec)
+        print_debug(str(data_rec))
         try:
             write_to_local(path, data_rec)
         except Exception as e:
@@ -655,7 +666,7 @@ def do_upload(ftp):
         remote_path = raw_input("What do you want to name the remote file?\n> ")
     try:
         msg_rec, data_rec = ftp.stor_cmd(sock, local_file, remote_path, transfer_type)
-        print("%s\n" % data_rec)
+        print_debug(str(data_rec))
     except Exception as e:
         print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
@@ -747,7 +758,12 @@ def do_quit(ftp):
 
 def parse_server_response(msg):
     """Return server response without server tags and status codes."""
-    return msg[5:-5]
+    if msg.startswith("'"):
+        print_debug(msg[5:-5])
+        return msg[5:-5]
+    else:
+        print_debug(msg)
+        return msg
 
 
 def handle_main_menu_choice(choice, ftp):
