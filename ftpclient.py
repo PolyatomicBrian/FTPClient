@@ -19,11 +19,12 @@ BUFF_SIZE = 1024
 
 # FTP Server Response Codes directly referenced in this program.
 FTP_STATUS_CODES = {
-    "SUCCESSFUL_RETR":   "150",
-    "SUCCESSFUL_STOR":   "150",
-    "SUCCESSFUL_LOGIN":  "230",
-    "SUCCESSFUL_LOGOUT": "231",
-    "SUCCESSFUL_CWD":    "250"
+    "SUCCESSFUL_RETR":     "150",
+    "SUCCESSFUL_STOR":     "150",
+    "SUCCESSFUL_TRANSFER": "226",
+    "SUCCESSFUL_LOGIN":    "230",
+    "SUCCESSFUL_LOGOUT":   "231",
+    "SUCCESSFUL_CWD":      "250"
 }
 
 # Actions User can make when at the Main Menu.
@@ -124,6 +125,7 @@ class FTP:
             error_quit("Invalid or unknown host address!", 400)
         try:
             # Connect socket to IP and Port.
+            print_debug("PORT: " + str(port))
             port = int(port)
             sock.connect((ip, port))
         except socket.error:
@@ -181,6 +183,7 @@ class FTP:
         index_of_port_1 = 4
         index_of_port_2 = 5
         try:
+            print_debug(msg_rec)
             # Parse out IP & Port from the parenthesis within the PASV resp.
             host_info = msg_rec[msg_rec.index("(") + 1:msg_rec.rindex(")")]
             # Break up IP & Port based on comma separated delimiter.
@@ -191,7 +194,8 @@ class FTP:
             # Get Port as a valid port number.
             host_port = int(host_info_split[index_of_port_1]) * 256 + \
                         int(host_info_split[index_of_port_2])
-        except Exception:
+        except Exception as e:
+            print_debug("Error: " + str(e))
             return "", ""
         return host_ip, host_port
 
@@ -352,9 +356,13 @@ class FTP:
                 # Have client get data from server.
                 data_rec = self.get_from_data_channel(sock)
                 self.close_socket(sock)
-            print(data_rec)
             # Get Transfer success / failed message.
             msg_cmd_rec = self.s.recv(BUFF_SIZE)
+            print_debug("Transfer Status: " + str(msg_cmd_rec))
+            if get_ftp_server_code(msg_cmd_rec) == FTP_STATUS_CODES["SUCCESSFUL_TRANSFER"]:
+                print("Download successful.")
+            else:
+                print("Something went wrong when downloading. Try again.")
             return msg_rec, data_rec
         else:
             return "File not found or inaccessible.", None
@@ -382,8 +390,13 @@ class FTP:
                 # Have client get data from server.
                 data_rec = self.send_to_data_channel(sock, data)
                 self.close_socket(sock)
-            print(data_rec)
             # Get Transfer success / failed message.
+            msg_cmd_rec = self.s.recv(BUFF_SIZE)
+            print_debug("Transfer Status: " + str(msg_cmd_rec))
+            if get_ftp_server_code(msg_cmd_rec) == FTP_STATUS_CODES["SUCCESSFUL_TRANSFER"]:
+                print("Upload successful.")
+            else:
+                print("Something went wrong when uploading. Try again.")
             return msg_rec, data_rec
         else:
             return "File not found or inaccessible.", None
@@ -414,7 +427,7 @@ class FTP:
         else:
             # Send HELP to the server.
             command = "HELP\r\n"
-            msg_rec = self.send_and_log(self.s, command).decode('string_escape')[1:-1]
+            msg_rec = self.send_and_log(self.s, command).decode('string_escape')
             # This command has the server send two responses, so read in the second one.
             msg_rec += repr(self.s.recv(BUFF_SIZE)).decode('string_escape')[1:-1]
         return msg_rec
@@ -526,7 +539,12 @@ def prompt_pass():
 
 def get_ftp_server_code(resp_msg):
     """Returns the error code (a three-digit string) of an FTP server response."""
-    return resp_msg[1:4]
+    if resp_msg.startswith("'"):
+        print_debug(resp_msg[1:4])
+        return resp_msg[1:4]
+    else:
+        print_debug(resp_msg[0:3])
+        return resp_msg[0:3]
 
 
 def login(ftp):
@@ -575,7 +593,7 @@ def do_download(ftp):
         path = raw_input("What file do you want to download?\n> ")
     try:
         msg_rec, data_rec = ftp.retr_cmd(sock, path, transfer_type)
-        print("%s\n" % msg_rec)
+        print_debug(str(msg_rec))
     except Exception as e:
         print("An error has occurred: " + str(e) + "\nPlease try again.")
         return main_menu(ftp)
@@ -625,8 +643,12 @@ def do_upload(ftp):
 
     # What file to upload?
     local_file = raw_input("What local file do you want to upload?\n> ")
-    while not local_file:
+    is_file = os.path.isfile(local_file)
+    while not local_file or not is_file:
+        if not is_file:
+            print("File not found.")
         local_file = raw_input("What local file do you want to upload?\n> ")
+        is_file = os.path.isfile(local_file)
     # What to save file as?
     remote_path = raw_input("What do you want to name the remote file?\n> ")
     while not remote_path:
