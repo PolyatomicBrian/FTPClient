@@ -416,7 +416,7 @@ class FTP:
         return msg_rec
 
     def help_cmd(self, cmd=None):
-        """Send HELP command to server. Note: This is broken!"""
+        """Send HELP command to server."""
         print_debug("Executing HELP")
         # If we're looking up the HELP of a specific command...
         if cmd:
